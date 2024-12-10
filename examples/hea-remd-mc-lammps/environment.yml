@@ -1,0 +1,13 @@
+channels:
+  - plumed/label/nightly
+  - conda-forge
+dependencies:
+  - python=3.11
+  - pip
+  - pip:
+    - ase==3.22.1
+    - chemiscope
+    - matplotlib
+variables:
+  PYTHONPATH: 
+  PLUMED_KERNEL:
