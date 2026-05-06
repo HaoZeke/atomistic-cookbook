@@ -18,22 +18,30 @@ similar ideas to QM/MM.
     mechanics, while the rest uses a classical force field.  ML/MM follows the same
     principle, replacing the QM Hamiltonian with a machine learning potential.
 
-    The GROMACS *Metatomic* plugin implements **mechanical embedding**: the classical
-    bonded interactions (bonds, angles, dihedrals) and non-bonded interactions
-    (Lennard-Jones, Coulomb) *within* the ML region are removed from the force field
-    and replaced by the ML model's energy and forces.  Interactions between ML and MM
-    atoms (the coupling terms) are handled by the classical force field.  This is
-    closely related to the ONIOM subtractive scheme [2]_:
+    The simplest way to couple the two descriptions is an additive mechanical
+    embedding control,
+
+    .. math::
+
+        E_\\text{additive} = E_\\text{MM}(\\text{full})
+        + E_\\text{ML}(\\text{solute})
+
+    which leaves the classical topology untouched and adds the ML model on top.
+    This is useful for a toy/control calculation, but it double-counts bonded and
+    non-bonded terms inside the solute.
+
+    For a replacement ML description of the solute, GROMACS Metatomic can instead
+    use an opt-in ONIOM-style subtractive scheme [2]_:
 
     .. math::
 
         E_\\text{tot} = E_\\text{MM}(\\text{full}) + E_\\text{ML}(\\text{solute})
         - E_\\text{MM}(\\text{solute})
 
-    where the MM contribution of the solute is subtracted to avoid double-counting.
-    Currently, boundary interactions (angles and dihedrals spanning the ML/MM
-    interface) are kept in the MM evaluation, which introduces a small inconsistency
-    at the boundary.
+    In this mode, bonded and non-bonded MM terms fully inside the ML region are
+    removed from the force-field contribution and replaced by the ML model energy
+    and forces. Interactions spanning the ML/MM boundary are handled by the
+    classical force field unless link atoms are enabled for a covalent cut.
 
     .. [1] Warshel & Levitt, J. Mol. Biol. 103, 227 (1976).
     .. [2] Chung et al., Chem. Rev. 115, 5678 (2015).
@@ -48,16 +56,15 @@ from the `UPET <https://huggingface.co/lab-cosmo/upet>`_ family.
 
 .. warning ::
 
-    **Limitations of the current implementation**
+    **Limitations**
 
     1. PET-MAD is trained on a broad materials dataset (r2SCAN functional) and is *not*
        optimized for biomolecular systems.  It is used here to demonstrate the workflow.
        For production work, use a model fine-tuned on relevant biochemical data.
 
-    2. The current GROMACS metatomic interface does not yet implement full ONIOM
-       subtractive correction at the ML/MM boundary.  Boundary bonded interactions
-       (angles and dihedrals that span the interface) are double-counted, which can
-       cause energy drift.  A proper ONIOM implementation is in progress.
+    2. The additive control intentionally double-counts the ML region and should not
+       be used as a production Hamiltonian. The ONIOM run below enables the
+       subtractive topology preprocessing with ``metatomic-oniom = yes``.
 
     3. Energy conservation holds in **conservative mode** (the default), where forces
        are obtained via automatic differentiation of the ML energy.  The
@@ -140,29 +147,91 @@ print(f"Successfully exported {fname}.")
 #
 # .. literalinclude:: grompp.mdp
 #    :language: ini
-#    :lines: 26-31
+#    :lines: 29-34
 #
-# This tells GROMACS to load the exported PET-MAD model and apply ML forces to the
-# ``protein`` group.  All other atoms (water) use the classical force field as usual.
+# This tells GROMACS to load the exported PET-MAD model, apply ML forces to the
+# ``protein`` group, and enable the subtractive ONIOM topology preprocessing. All
+# other atoms (water) use the classical force field as usual.
 #
-# We run the GROMACS preprocessor (``grompp``) to combine the topology, coordinates, and
-# MDP settings into a single binary input (``.tpr``), then execute the simulation with
-# ``mdrun``.
+# We also run an additive control by changing only ``metatomic-oniom`` to ``no``.
+# This leaves the classical topology untouched and makes the double-counted reference
+# visible in the trajectory and in the ``grompp`` preprocessing summary.
 
-_ = subprocess.check_call(
-    [
-        "gmx_mpi",
-        "grompp",
-        "-f",
-        "grompp.mdp",
-        "-c",
-        "data/conf.gro",
-        "-p",
-        "data/topol.top",
-    ]
-)
 
-_ = subprocess.check_call(["gmx_mpi", "mdrun"])
+def write_additive_control_mdp():
+    """Write an additive-control MDP from the ONIOM MDP."""
+    oniom_mdp = Path("grompp.mdp").read_text()
+    additive_mdp = oniom_mdp.replace(
+        "metatomic-oniom         = yes",
+        "metatomic-oniom         = no ",
+    )
+    if additive_mdp == oniom_mdp:
+        raise RuntimeError("Could not construct the additive-control MDP.")
+    Path("grompp-additive.mdp").write_text(additive_mdp)
+    return Path("grompp-additive.mdp")
+
+
+def run_gromacs_case(label, mdp_file):
+    """Preprocess and run one GROMACS case."""
+    grompp = subprocess.run(
+        [
+            "gmx_mpi",
+            "grompp",
+            "-f",
+            str(mdp_file),
+            "-c",
+            "data/conf.gro",
+            "-p",
+            "data/topol.top",
+            "-o",
+            f"{label}.tpr",
+            "-po",
+            f"{label}.mdout.mdp",
+        ],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    grompp_log = Path(f"{label}-grompp.log")
+    grompp_log.write_text(grompp.stdout + grompp.stderr)
+
+    subprocess.run(
+        ["gmx_mpi", "mdrun", "-s", f"{label}.tpr", "-deffnm", label],
+        check=True,
+    )
+    return grompp_log
+
+
+def topology_summary(log_path):
+    """Extract the Metatomic topology-preprocessing summary from grompp output."""
+    selected = []
+    for line in log_path.read_text().splitlines():
+        if (
+            "Metatomic potential interface" in line
+            or "Number of embedded Metatomic atoms" in line
+            or "Number of regular atoms" in line
+            or "Number of exclusions made" in line
+            or "Number of bonds removed" in line
+            or "Number of angles removed" in line
+            or "Number of dihedrals removed" in line
+        ):
+            selected.append(line)
+    return "\n".join(selected)
+
+
+cases = {
+    "additive": write_additive_control_mdp(),
+    "oniom": Path("grompp.mdp"),
+}
+
+grompp_logs = {
+    label: run_gromacs_case(label, mdp_file) for label, mdp_file in cases.items()
+}
+
+print("Additive control topology summary")
+print(topology_summary(grompp_logs["additive"]))
+print("\nONIOM topology summary")
+print(topology_summary(grompp_logs["oniom"]))
 
 # %%
 # RMSD analysis
@@ -180,19 +249,44 @@ _ = subprocess.check_call(["gmx_mpi", "mdrun"])
 #   starting conformation; larger RMSD values reflect changes in backbone or side-chain
 #   orientation.
 
-u = mda.Universe("data/conf.gro", "traj.trr")
-ala = u.select_atoms("not resname SOL")
+analysis = {}
+case_labels = {
+    "additive": "Additive control",
+    "oniom": "ONIOM",
+}
 
-rmsd = RMSD(atomgroup=ala, reference=ala_initial)
-_ = rmsd.run()
+for label in cases:
+    universe = mda.Universe("data/conf.gro", f"{label}.trr")
+    ala = universe.select_atoms("not resname SOL")
+    rmsd = RMSD(atomgroup=ala, reference=ala_initial)
+    _ = rmsd.run()
 
-time_ps = u.trajectory.dt * np.arange(u.trajectory.n_frames)
+    protein = universe.select_atoms("protein")
+    rama = Ramachandran(protein).run()
+
+    analysis[label] = {
+        "universe": universe,
+        "time_ps": universe.trajectory.dt * np.arange(universe.trajectory.n_frames),
+        "rmsd": rmsd.results["rmsd"][:, 2],
+        "phi": rama.results.angles[:, :, 0].flatten(),
+        "psi": rama.results.angles[:, :, 1].flatten(),
+    }
+
+u = analysis["oniom"]["universe"]
+time_ps = analysis["oniom"]["time_ps"]
 
 plt.figure(figsize=(6, 3))
-plt.plot(time_ps, rmsd.results["rmsd"][:, 2], linewidth=0.8)
+for label, result in analysis.items():
+    plt.plot(
+        result["time_ps"],
+        result["rmsd"],
+        linewidth=0.8,
+        label=case_labels[label],
+    )
 plt.xlabel("Time (ps)")
 plt.ylabel("RMSD (A)")
 plt.title("Solute RMSD")
+plt.legend(frameon=False)
 plt.tight_layout()
 
 # %%
@@ -209,11 +303,6 @@ plt.tight_layout()
 # the model at each grid point.  We then compare this against the empirical free
 # energy landscape derived from the reference Ramachandran data (statistical
 # distribution of phi/psi in high-resolution protein crystal structures).
-
-protein = u.select_atoms("protein")
-rama = Ramachandran(protein).run()
-phi_traj = rama.results.angles[:, :, 0].flatten()
-psi_traj = rama.results.angles[:, :, 1].flatten()
 
 # %%
 # PET-MAD energy surface
@@ -276,9 +365,9 @@ ref_psi = np.arange(-180, 180, 4)
 # phi/psi angles observed in high-resolution protein structures, which
 # is proportional to a Boltzmann-weighted free energy.
 #
-# On both panels, the ML/MM trajectory is shown as white dots with the
-# start (green star) and end (red star) marked explicitly.  Bright/warm
-# regions correspond to favorable conformations (low energy or high
+# On both panels, the additive control and ONIOM trajectories are overlaid so the
+# effect of subtracting the MM solute contribution can be inspected directly.
+# Bright/warm regions correspond to favorable conformations (low energy or high
 # population), while dark regions are unfavorable.
 
 degree_fmt = plt.matplotlib.ticker.StrMethodFormatter(r"{x:g}$\degree$")
@@ -303,38 +392,46 @@ def style_rama_ax(ax):
 
 
 def add_trajectory(ax):
-    """Add trajectory points with start/end markers to a Ramachandran axis."""
-    ax.scatter(
-        phi_traj,
-        psi_traj,
-        s=10,
-        c="white",
-        edgecolors="black",
-        linewidths=0.3,
-        zorder=5,
-    )
-    ax.scatter(
-        phi_traj[0],
-        psi_traj[0],
-        s=80,
-        c="limegreen",
-        edgecolors="black",
-        linewidths=0.8,
-        marker="*",
-        zorder=6,
-        label="start",
-    )
-    ax.scatter(
-        phi_traj[-1],
-        psi_traj[-1],
-        s=80,
-        c="red",
-        edgecolors="black",
-        linewidths=0.8,
-        marker="*",
-        zorder=6,
-        label="end",
-    )
+    """Add additive-control and ONIOM trajectory points to a Ramachandran axis."""
+    colors = {
+        "additive": "tab:orange",
+        "oniom": "white",
+    }
+    for label, result in analysis.items():
+        phi = result["phi"]
+        psi = result["psi"]
+        color = colors[label]
+        ax.plot(phi, psi, color=color, linewidth=0.7, alpha=0.8, zorder=5)
+        ax.scatter(
+            phi,
+            psi,
+            s=10,
+            c=color,
+            edgecolors="black",
+            linewidths=0.3,
+            zorder=6,
+            label=case_labels[label],
+        )
+        ax.scatter(
+            phi[0],
+            psi[0],
+            s=70,
+            c=color,
+            edgecolors="black",
+            linewidths=0.8,
+            marker="*",
+            zorder=7,
+        )
+        ax.scatter(
+            phi[-1],
+            psi[-1],
+            s=55,
+            c=color,
+            edgecolors="black",
+            linewidths=0.8,
+            marker="X",
+            zorder=7,
+        )
     ax.legend(loc="upper right", fontsize=7, framealpha=0.8)
 
 
@@ -374,12 +471,12 @@ fig.tight_layout()
 
 # Extract protein trajectory
 subprocess.run(
-    ["gmx_mpi", "trjconv", "-f", "traj.trr", "-s", "topol.tpr", "-o", "traj.pdb"],
+    ["gmx_mpi", "trjconv", "-f", "oniom.trr", "-s", "oniom.tpr", "-o", "oniom-traj.pdb"],
     input=b"1\n",  # select Protein group
     check=True,
 )
 
-trajectory = ase.io.read("traj.pdb", index=":")
+trajectory = ase.io.read("oniom-traj.pdb", index=":")
 
 # Fix PBC wrapping: unwrap each frame so the molecule stays intact.
 # Walk along the chain sequentially, placing each atom within half a
@@ -407,7 +504,7 @@ for frame in trajectory:
 
 properties = {
     "time": time_ps,
-    "rmsd": rmsd.results["rmsd"][:, 2],
+    "rmsd": analysis["oniom"]["rmsd"],
     "energy": np.array(frame_energies),
 }
 
