@@ -196,7 +196,7 @@ def run_gromacs_case(label, mdp_file):
     grompp_log.write_text(grompp.stdout + grompp.stderr)
 
     subprocess.run(
-        ["gmx_mpi", "mdrun", "-s", f"{label}.tpr", "-deffnm", label],
+        ["gmx_mpi", "mdrun", "-s", f"{label}.tpr", "-deffnm", label, "-ntomp", "1"],
         check=True,
     )
     return grompp_log
