@@ -51,14 +51,15 @@ import ira_mod
 import matplotlib.image as mpimg
 import matplotlib.pyplot as plt
 import numpy as np
+import pyeonclient as pc
 import readcon
 from ase.mep import NEB
 from ase.optimize import LBFGS
 from ase.visualize import view
 from ase.visualize.plot import plot_atoms
-from metatomic_ase import MetatomicCalculator
 from atomistic_cookbook_utils import run_command
-from rgpycrumbs.eon.helpers import write_eon_config
+from metatomic_ase import MetatomicCalculator
+from pyeonclient.backends import make_backend
 from rgpycrumbs.run.jupyter import run_command_or_exit
 
 
@@ -318,66 +319,55 @@ plt.show()
 #    iteratively switching to the dimer method for
 #    faster convergence by the climbing image.
 #
-# To use eOn, we setup a function that writes the desired eOn input for us and
-# runs the ``eonclient`` binary. Since we are in a notebook environment, we will
-# use several abstractions over raw ``subprocess`` calls. In practice, writing
-# and using eOn involves a configuration file, which we define as a dictionary
-# to be used with a helper to generate the final output.
+# Force engine via ``make_backend("metatomic")``; NEB knobs live on
+# ``Parameters`` and are passed straight into ``NudgedElasticBand``.
 
-# Define configuration as a dictionary for clarity
-neb_settings = {
-    "Main": {"job": "nudged_elastic_band", "random_seed": 706253457},
-    "Potential": {"potential": "Metatomic"},
-    "Metatomic": {"model_path": fname.absolute()},
-    "Nudged Elastic Band": {
-        "images": N_INTERMEDIATE_IMGS,
-        # initialization
-        "initializer": "file",
-        "initial_path_in": "idppPath.dat",
-        "minimize_endpoints": "false",
-        # CI-NEB settings
-        "climbing_image_method": "true",
-        "climbing_image_converged_only": "true",
-        "ci_after": 0.5,
-        "ci_after_rel": 0.8,
-        # energy weighing
-        "energy_weighted": "true",
-        "ew_ksp_min": 0.972,
-        "ew_ksp_max": 9.72,
-        # OCI-NEB settings
-        "ci_mmf": "true",
-        "ci_mmf_after": 0.1,
-        "ci_mmf_after_rel": 0.5,
-        "ci_mmf_penalty_strength": 1.5,
-        "ci_mmf_penalty_base": 0.4,
-        "ci_mmf_angle": 0.9,
-        "ci_mmf_nsteps": 1000,
-    },
-    "Optimizer": {
-        "max_iterations": 1000,
-        "opt_method": "lbfgs",
-        "max_move": 0.1,
-        "converged_force": 0.01,
-    },
-    "Debug": {"write_movies": "true"},
-}
-
-
-# %%
-# Which now let's us write out the final triplet of reactant, product, and
-# configuration of the eOn-NEB.
-
-write_eon_config(Path("."), neb_settings)
 write_con("reactant.con", reactant)
 write_con("product.con", product)
 
+pot = make_backend("metatomic", model_path=str(fname.resolve()), device="cpu")
+params = pc.Parameters()
+params.random_seed = 706253457
+params.neb_images = N_INTERMEDIATE_IMGS
+params.neb_init_method = pc.NEBInit.FILE
+params.neb_initial_path = "idppPath.dat"
+params.neb_minimize_endpoints = False
+params.neb_climbing_image = True
+params.neb_climbing_converged_only = True
+params.neb_ci_after = 0.5
+params.neb_ci_after_rel = 0.8
+params.neb_energy_weighted = True
+params.neb_ew_ksp_min = 0.972
+params.neb_ew_ksp_max = 9.72
+params.neb_ci_mmf = True
+params.neb_ci_mmf_after = 0.1
+params.neb_ci_mmf_after_rel = 0.5
+params.neb_ci_mmf_angle = 0.9
+params.neb_ci_mmf_nsteps = 1000
+params.neb_max_iterations = 1000
+params.neb_force_tolerance = 0.01
+params.opt_max_iterations = 1000
+params.opt_converged_force = 0.01
+params.opt_max_move = 0.1
+params.write_movies = True
+
+initial = pc.Matter(pot, params)
+final = pc.Matter(pot, params)
+assert pc.io_ok(initial.con2matter("reactant.con"))
+assert pc.io_ok(final.con2matter("product.con"))
+
 # %%
-# Run the main C++ client
-# ^^^^^^^^^^^^^^^^^^^^^^^
+# Run energy-weighted CI-NEB with OCI-MMF
+# ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 #
-# This runs 'eonclient' and streams output live.
-# If it fails, the notebook execution stops here.
-run_command_or_exit(["eonclient"], capture=True, timeout=300)
+
+neb = pc.NudgedElasticBand(initial, final, params, pot)
+status = neb.compute()
+print("NEB status:", status)
+if status == pc.NEBStatus.GOOD:
+    neb.find_extrema()
+pc.neb_write_results(neb, params, pot.force_call_counter)
+del neb, initial, final
 
 
 # %%
@@ -660,38 +650,41 @@ dir_product = Path("min_product")
 dir_product.mkdir(exist_ok=True)
 write_con(dir_product / "pos.con", product)
 
-# Shared minimization settings
-min_settings = {
-    "Main": {"job": "minimization", "random_seed": 706253457},
-    "Potential": {"potential": "Metatomic"},
-    "Metatomic": {"model_path": fname.absolute()},
-    "Optimizer": {
-        "max_iterations": 2000,
-        "opt_method": "lbfgs",
-        "max_move": 0.1,
-        "converged_force": 0.01,
-    },
-    # Movie frames for plt-min landscape / profile / convergence figures.
-    # write_deprecated_outs keeps legacy .dat sidecars for older tooling.
-    "Debug": {"write_movies": True, "write_deprecated_outs": True},
-}
-
-write_eon_config(dir_reactant, min_settings)
-write_eon_config(dir_product, min_settings)
+# Shared minimization Parameters (movies feed landscape figures below).
+min_params = pc.Parameters()
+min_params.random_seed = 706253457
+min_params.opt_max_iterations = 2000
+min_params.opt_max_move = 0.1
+min_params.opt_converged_force = 0.01
+min_params.write_movies = True
 
 
 # %%
 # Run the minimization
 # ^^^^^^^^^^^^^^^^^^^^
 #
-# The 'eonclient' will use the correct configuration within the folder.
+# Same ``make_backend`` potential as the NEB; ``Matter.relax`` writes the
+# dense force-eval movies used by the landscape plots.
 #
-with chdir(dir_reactant):
-    run_command_or_exit(["eonclient"], capture=True, timeout=300)
+def _minimize_endpoint(workdir: Path) -> None:
+    with chdir(workdir):
+        pot_min = make_backend(
+            "metatomic", model_path=str(fname.resolve()), device="cpu"
+        )
+        m = pc.Matter(pot_min, min_params)
+        assert pc.io_ok(m.con2matter("pos.con"))
+        m.relax(
+            inplace=True,
+            write_movie=True,
+            prefix_movie="minimization",
+            prefix_checkpoint="pos",
+        )
+        m.matter2con("min.con")
+        del m, pot_min
 
 
-with chdir(dir_product):
-    run_command_or_exit(["eonclient"], capture=True, timeout=300)
+_minimize_endpoint(dir_reactant)
+_minimize_endpoint(dir_product)
 
 # Thin dense force-eval movies (every LBFGS potential call) so gradient-enhanced
 # surface fits for the 2D landscapes below remain well-conditioned.
