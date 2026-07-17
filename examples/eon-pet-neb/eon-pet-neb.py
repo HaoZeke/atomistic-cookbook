@@ -325,13 +325,13 @@ plt.show()
 #    iteratively switching to the dimer method for
 #    faster convergence by the climbing image.
 #
-# Force engine via ``make_backend("metatomic")``; NEB knobs live on
-# ``Parameters`` and are passed straight into ``NudgedElasticBand``.
+# Force engine via ``make_backend("metatomic")``; one ``Parameters`` object
+# owns pot type + NEB knobs (pass ``params=`` into the factory so
+# ``results.dat`` / registry see Metatomic, not a leftover default).
 
 write_con("reactant.con", reactant)
 write_con("product.con", product)
 
-pot = make_backend("metatomic", model_path=str(fname.resolve()), device="cpu")
 params = pc.Parameters()
 params.random_seed = 706253457
 params.neb_images = N_INTERMEDIATE_IMGS
@@ -357,6 +357,12 @@ params.opt_converged_force = 0.01
 params.opt_max_move = 0.1
 params.write_movies = True
 
+pot = make_backend(
+    "metatomic",
+    model_path=str(fname.resolve()),
+    device="cpu",
+    params=params,
+)
 initial = pc.Matter(pot, params)
 final = pc.Matter(pot, params)
 assert pc.io_ok(initial.con2matter("reactant.con"))
@@ -672,13 +678,16 @@ min_params.write_movies = True
 # Run the minimization
 # ^^^^^^^^^^^^^^^^^^^^
 #
-# Same ``make_backend`` potential as the NEB; ``Matter.relax`` writes the
-# dense force-eval movies used by the landscape plots.
+# Same ``make_backend(..., params=)`` pattern as the NEB; ``Matter.relax``
+# writes the dense force-eval movies used by the landscape plots.
 #
 def _minimize_endpoint(workdir: Path) -> None:
     with chdir(workdir):
         pot_min = make_backend(
-            "metatomic", model_path=str(fname.resolve()), device="cpu"
+            "metatomic",
+            model_path=str(fname.resolve()),
+            device="cpu",
+            params=min_params,
         )
         m = pc.Matter(pot_min, min_params)
         assert pc.io_ok(m.con2matter("pos.con"))
