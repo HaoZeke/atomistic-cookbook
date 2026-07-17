@@ -432,6 +432,7 @@ def run_neb_plot(
         sys.executable,
         "-m",
         "rgpycrumbs.cli",
+        "--dev",
         "eon",
         "plt-neb",
         "--con-file",
@@ -539,6 +540,7 @@ def run_min_plot(
         sys.executable,
         "-m",
         "rgpycrumbs.cli",
+        "--dev",
         "eon",
         "plt-min",
         "--plot-type",
@@ -582,8 +584,9 @@ def show_png(path: str, figsize=(10, 8)) -> None:
 os.environ.setdefault("MPLBACKEND", "Agg")
 # Prefer uv PEP 723 isolation for plot scripts so host need not carry
 # chemparseplot/jax/adjustText (avoids partial in-env stack).
-os.environ.setdefault("RGPKGS_FORCE_UV", "1")
-os.environ.setdefault("RGPYCRUMBS_FORCE_UV", "1")  # legacy alias
+# Host env owns plot deps (chemparseplot/jax); do not uv-isolate editable monorepo.
+os.environ.setdefault("RGPKGS_FORCE_UV", "0")
+os.environ.setdefault("RGPYCRUMBS_FORCE_UV", "0")
 
 # Run the 1D plotting command using the helper
 run_neb_plot("profile", title="NEB Path Optimization", output_file="1D_oxad.png")
