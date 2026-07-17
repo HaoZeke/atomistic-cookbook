@@ -67,10 +67,10 @@ from pyeonclient import (
     PathInit,
     append_timing,
     io_ok,
-    neb_write_results,
     pot_registry_total_force_calls,
     steady_clock_now,
     write_minimization_results,
+    write_neb_results,
     write_potcall_summary,
 )
 from pyeonclient.backends import (
@@ -403,8 +403,8 @@ status = neb.compute()
 f_neb = pot_registry_total_force_calls() - f0
 print("NEB status:", status)
 if status == NEBStatus.GOOD:
-    neb.band.find_extrema()
-neb_write_results(neb.band, params, f_neb)
+    neb.find_extrema()
+write_neb_results(neb, params, f_neb)
 del neb, initial, final, pot
 write_potcall_summary("_potcalls.json")
 append_timing("results.dat", t0)
