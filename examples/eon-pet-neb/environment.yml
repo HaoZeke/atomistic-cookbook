@@ -3,8 +3,7 @@ channels:
   - conda-forge
   - https://repo.prefix.dev/rg-forge
 dependencies:
-  # eOn 2.16: CON via readcon-core; class-first pyeonclient for Matter/NEB.
-  - eon>=2.16.0
+  # Class-first client only: pyeonclient + eon-schema. No eon-akmc / full eon tree.
   - ira
   - python=3.13
   - pip
@@ -13,15 +12,13 @@ dependencies:
     - torch>=2.9,<2.10
     - ase>=3.23
     - matplotlib
-    # eOn 2.16 is built against libmetatomic-torch >=0.1.15; metatrain
-    # 2026.3.1 is the first release that requires the same floor.
+    # PET-MAD / metatomic floor for pyeonclient metatomic backend.
     - metatrain>=2026.3.1
     - requests
     - metatomic-ase
     - pyeonclient>=2.16.0
-    # Notebook CON I/O only. Plot deps (chemparseplot, jax, adjustText, …)
-    # Prefer library API when plot pipelines are public; today full NEB
-    # plots still go through CLI uv PEP 723 / ensure_import — not host pins.
+    - eon-schema>=0.2.0
+    # Notebook CON I/O + plots (rgpycrumbs uses eon-schema, not eon-akmc).
     - "readcon>=0.13.1"
     - "rgpycrumbs>=1.9.16,<2"
     - atomistic-cookbook-utils >=0.1,<0.2
