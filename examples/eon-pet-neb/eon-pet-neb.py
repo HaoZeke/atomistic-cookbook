@@ -65,11 +65,19 @@ from pyeonclient import (
     NebSpec,
     Parameters,
     PathInit,
+    append_timing,
     io_ok,
     neb_write_results,
+    pot_registry_total_force_calls,
+    steady_clock_now,
+    write_minimization_results,
+    write_potcall_summary,
 )
-from pyeonclient.backends import make_backend, make_metatomic_ase_calculator
-from pyeonclient.backends import ensure_metatomic_load_compat
+from pyeonclient.backends import (
+    ensure_metatomic_load_compat,
+    make_backend,
+    make_metatomic_ase_calculator,
+)
 from rgpycrumbs.run.jupyter import run_command_or_exit
 
 
@@ -330,12 +338,16 @@ plt.show()
 #    iteratively switching to the dimer method for
 #    faster convergence by the climbing image.
 #
-# Force engine via ``make_backend``; NEB knobs via ``NebSpec`` applied onto
-# one ``Parameters`` (same object passed into the pot factory).
+# We compose the NEB from the same client steps as a workdir job, but keep
+# structures as ``Matter`` end to end. The steps are::
+#
+#   NebSpec → Parameters → make_backend → Matter endpoints → NEB.compute
+#   → find_extrema → neb_write_results → potcall summary → timing
 
 write_con("reactant.con", reactant)
 write_con("product.con", product)
 
+# Parameters from NebSpec (path list is the IDPP images written above)
 params = Parameters()
 spec = NebSpec(
     n_images=N_INTERMEDIATE_IMGS,
@@ -362,6 +374,7 @@ spec = NebSpec(
 )
 spec.apply_to_parameters(params)
 
+# Potential (metatomic PET-MAD) and endpoints
 pot = make_backend(
     "metatomic",
     model_path=str(fname.resolve()),
@@ -370,21 +383,31 @@ pot = make_backend(
 )
 initial = Matter(pot, params)
 final = Matter(pot, params)
-assert io_ok(initial.con2matter("reactant.con"))
-assert io_ok(final.con2matter("product.con"))
+if not io_ok(initial.con2matter("reactant.con")):
+    raise RuntimeError("failed to load reactant.con")
+if not io_ok(final.con2matter("product.con")):
+    raise RuntimeError("failed to load product.con")
 
 # %%
 # Run energy-weighted CI-NEB with OCI-MMF
 # ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 #
+# ``NEB.compute`` optimizes the band. On a good termination we locate extrema
+# along the path, then write the same artifact set as the standalone client
+# (``results.dat``, ``neb.con``, ``sp.con``, …).
 
+t0 = steady_clock_now()
+f0 = pot_registry_total_force_calls()
 neb = NEB(initial, final, params, pot, spec=spec)
 status = neb.compute()
+f_neb = pot_registry_total_force_calls() - f0
 print("NEB status:", status)
 if status == NEBStatus.GOOD:
     neb.band.find_extrema()
-neb_write_results(neb.band, params, pot.force_call_counter)
-del neb, initial, final
+neb_write_results(neb.band, params, f_neb)
+del neb, initial, final, pot
+write_potcall_summary("_potcalls.json")
+append_timing("results.dat", t0)
 
 
 # %%
@@ -670,7 +693,8 @@ dir_product = Path("min_product")
 dir_product.mkdir(exist_ok=True)
 write_con(dir_product / "pos.con", product)
 
-# Shared minimization Parameters (movies feed landscape figures below).
+# Optimizer settings shared by both endpoint minimizations. Dense movies
+# (``write_movies``) feed the landscape figures below.
 min_params = Parameters()
 min_params.random_seed = 706253457
 min_params.opt_max_iterations = 2000
@@ -683,36 +707,42 @@ min_params.write_movies = True
 # Run the minimization
 # ^^^^^^^^^^^^^^^^^^^^
 #
-# Same ``make_backend(..., params=)`` pattern as the NEB; ``Matter.relax``
-# writes the dense force-eval movies used by the landscape plots.
+# Explicit Matter steps for each endpoint (same order as
+# ``minimize_workdir``)::
 #
-def _minimize_endpoint(workdir: Path) -> None:
+#   make_backend → Matter → con2matter → relax → matter2con
+#   → write_minimization_results → potcall summary → timing
+
+for workdir in (dir_reactant, dir_product):
     with chdir(workdir):
-        pot_min = make_backend(
+        t0 = steady_clock_now()
+        pot = make_backend(
             "metatomic",
             model_path=str(fname.resolve()),
             device="cpu",
             params=min_params,
         )
-        m = Matter(pot_min, min_params)
-        assert io_ok(m.con2matter("pos.con"))
-        m.relax(
+        matter = Matter(pot, min_params)
+        if not io_ok(matter.con2matter("pos.con")):
+            raise RuntimeError(f"failed to load {workdir}/pos.con")
+        _m, converged = matter.relax(
             inplace=True,
             write_movie=True,
             prefix_movie="minimization",
             prefix_checkpoint="pos",
         )
-        m.matter2con("min.con")
-        del m, pot_min
+        matter.matter2con("min.con")
+        write_minimization_results(
+            min_params, pot, matter, converged=bool(converged)
+        )
+        del matter, pot
+        write_potcall_summary("_potcalls.json")
+        append_timing("results.dat", t0)
 
-
-_minimize_endpoint(dir_reactant)
-_minimize_endpoint(dir_product)
-
-# Thin dense force-eval movies (every LBFGS potential call) so gradient-enhanced
-# surface fits for the 2D landscapes below remain well-conditioned.
-for _min_dir in (dir_reactant, dir_product):
-    thin_min_movie(_min_dir, max_frames=64)
+# Thin dense force-eval movies so gradient-enhanced surface fits stay
+# well-conditioned (keep endpoints and up to 64 evenly spaced frames).
+for workdir in (dir_reactant, dir_product):
+    thin_min_movie(workdir, max_frames=64)
 
 
 # %%
