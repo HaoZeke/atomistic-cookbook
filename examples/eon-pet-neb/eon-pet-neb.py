@@ -51,15 +51,25 @@ import ira_mod
 import matplotlib.image as mpimg
 import matplotlib.pyplot as plt
 import numpy as np
-import pyeonclient as pc
 import readcon
-from ase.mep import NEB
+from ase.mep import NEB as AseNEB
 from ase.optimize import LBFGS
 from ase.visualize import view
 from ase.visualize.plot import plot_atoms
 from atomistic_cookbook_utils import run_command
 from metatomic_ase import MetatomicCalculator
-from pyeonclient.backends import make_backend
+from pyeonclient import (
+    Matter,
+    NEB,
+    NEBStatus,
+    NebSpec,
+    Parameters,
+    PathInit,
+    io_ok,
+    neb_write_results,
+)
+from pyeonclient.backends import make_backend, make_metatomic_ase_calculator
+from pyeonclient.backends import ensure_metatomic_load_compat
 from rgpycrumbs.run.jupyter import run_command_or_exit
 
 
@@ -192,7 +202,7 @@ images = [reactant]
 images += [reactant.copy() for _ in range(N_INTERMEDIATE_IMGS)]
 images += [product]
 
-neb = NEB(images)
+neb = AseNEB(images)
 neb.interpolate("idpp")
 
 # %%
@@ -233,11 +243,6 @@ print(f"Wrote absolute paths to '{summary_file}'.")
 
 # define the calculator (load-compat for PET-MAD ScriptModule layout)
 def mk_mta_calc():
-    from pyeonclient.backends import (
-        ensure_metatomic_load_compat,
-        make_metatomic_ase_calculator,
-    )
-
     ensure_metatomic_load_compat()
     return make_metatomic_ase_calculator(
         str(fname),
@@ -254,7 +259,7 @@ for img in ipath:
 
 print(img.calc._model.capabilities().outputs)
 
-neb = NEB(ipath, climb=True, k=5, method="improvedtangent")
+neb = AseNEB(ipath, climb=True, k=5, method="improvedtangent")
 neb.interpolate("idpp")
 
 # store initial path guess for plotting
@@ -325,37 +330,37 @@ plt.show()
 #    iteratively switching to the dimer method for
 #    faster convergence by the climbing image.
 #
-# Force engine via ``make_backend("metatomic")``; one ``Parameters`` object
-# owns pot type + NEB knobs (pass ``params=`` into the factory so
-# ``results.dat`` / registry see Metatomic, not a leftover default).
+# Force engine via ``make_backend``; NEB knobs via ``NebSpec`` applied onto
+# one ``Parameters`` (same object passed into the pot factory).
 
 write_con("reactant.con", reactant)
 write_con("product.con", product)
 
-params = pc.Parameters()
-params.random_seed = 706253457
-params.neb_images = N_INTERMEDIATE_IMGS
-params.neb_init_method = pc.NEBInit.FILE
-params.neb_initial_path = "idppPath.dat"
-params.neb_minimize_endpoints = False
-params.neb_climbing_image = True
-params.neb_climbing_converged_only = True
-params.neb_ci_after = 0.5
-params.neb_ci_after_rel = 0.8
-params.neb_energy_weighted = True
-params.neb_ew_ksp_min = 0.972
-params.neb_ew_ksp_max = 9.72
-params.neb_ci_mmf = True
-params.neb_ci_mmf_after = 0.1
-params.neb_ci_mmf_after_rel = 0.5
-params.neb_ci_mmf_angle = 0.9
-params.neb_ci_mmf_nsteps = 1000
-params.neb_max_iterations = 1000
-params.neb_force_tolerance = 0.01
-params.opt_max_iterations = 1000
-params.opt_converged_force = 0.01
-params.opt_max_move = 0.1
-params.write_movies = True
+params = Parameters()
+spec = NebSpec(
+    n_images=N_INTERMEDIATE_IMGS,
+    path_init=PathInit.file,
+    path_list="idppPath.dat",
+    minimize_endpoints=False,
+    climbing_image=True,
+    climbing_converged_only=True,
+    ci_after=0.5,
+    ci_after_rel=0.8,
+    energy_weighted=True,
+    ew_ksp_min=0.972,
+    ew_ksp_max=9.72,
+    ci_mmf=True,
+    ci_mmf_after=0.1,
+    ci_mmf_after_rel=0.5,
+    ci_mmf_angle=0.9,
+    ci_mmf_nsteps=1000,
+    max_iterations=1000,
+    force_tolerance=0.01,
+    max_move=0.1,
+    write_movies=True,
+    random_seed=706253457,
+)
+spec.apply_to_parameters(params)
 
 pot = make_backend(
     "metatomic",
@@ -363,22 +368,22 @@ pot = make_backend(
     device="cpu",
     params=params,
 )
-initial = pc.Matter(pot, params)
-final = pc.Matter(pot, params)
-assert pc.io_ok(initial.con2matter("reactant.con"))
-assert pc.io_ok(final.con2matter("product.con"))
+initial = Matter(pot, params)
+final = Matter(pot, params)
+assert io_ok(initial.con2matter("reactant.con"))
+assert io_ok(final.con2matter("product.con"))
 
 # %%
 # Run energy-weighted CI-NEB with OCI-MMF
 # ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 #
 
-neb = pc.NudgedElasticBand(initial, final, params, pot)
+neb = NEB(initial, final, params, pot, spec=spec)
 status = neb.compute()
 print("NEB status:", status)
-if status == pc.NEBStatus.GOOD:
-    neb.find_extrema()
-pc.neb_write_results(neb, params, pot.force_call_counter)
+if status == NEBStatus.GOOD:
+    neb.band.find_extrema()
+neb_write_results(neb.band, params, pot.force_call_counter)
 del neb, initial, final
 
 
@@ -666,7 +671,7 @@ dir_product.mkdir(exist_ok=True)
 write_con(dir_product / "pos.con", product)
 
 # Shared minimization Parameters (movies feed landscape figures below).
-min_params = pc.Parameters()
+min_params = Parameters()
 min_params.random_seed = 706253457
 min_params.opt_max_iterations = 2000
 min_params.opt_max_move = 0.1
@@ -689,8 +694,8 @@ def _minimize_endpoint(workdir: Path) -> None:
             device="cpu",
             params=min_params,
         )
-        m = pc.Matter(pot_min, min_params)
-        assert pc.io_ok(m.con2matter("pos.con"))
+        m = Matter(pot_min, min_params)
+        assert io_ok(m.con2matter("pos.con"))
         m.relax(
             inplace=True,
             write_movie=True,
