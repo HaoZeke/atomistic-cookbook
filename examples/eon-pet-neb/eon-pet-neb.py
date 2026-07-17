@@ -231,10 +231,16 @@ print(f"Wrote absolute paths to '{summary_file}'.")
 # We first consider using metatomic with the ASE calculator.
 
 
-# define the calculator
+# define the calculator (load-compat for PET-MAD ScriptModule layout)
 def mk_mta_calc():
-    return MetatomicCalculator(
-        fname,
+    from pyeonclient.backends import (
+        ensure_metatomic_load_compat,
+        make_metatomic_ase_calculator,
+    )
+
+    ensure_metatomic_load_compat()
+    return make_metatomic_ase_calculator(
+        str(fname),
         device="cpu",
         non_conservative=False,
         uncertainty_threshold=0.001,
