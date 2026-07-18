@@ -124,7 +124,9 @@ fname = Path(f"models/pet-mad-xs-{tag}.pt")
 url = f"https://huggingface.co/{repo_id}/resolve/main/{url_path}"
 fname.parent.mkdir(parents=True, exist_ok=True)
 run_command(f"mtt export {url} -o {fname}")
-print(f"Successfully exported {fname}.")
+# Absolute path before any chdir (endpoint min runs under min_*/ cwd).
+model_path = str(fname.resolve())
+print(f"Successfully exported {fname} ({model_path}).")
 
 
 # %%
@@ -379,7 +381,7 @@ spec.apply_to_parameters(params)
 # engine matches vesin 0.6 VesinOptions (skin/n_threads).
 pot = make_backend(
     "rgpot_metatomic",
-    model_path=str(fname.resolve()),
+    model_path=model_path,
     device="cpu",
     params=params,
 )
@@ -720,7 +722,7 @@ for workdir in (dir_reactant, dir_product):
         t0 = steady_clock_now()
         pot = make_backend(
             "rgpot_metatomic",
-            model_path=str(fname.resolve()),
+            model_path=model_path,
             device="cpu",
             params=min_params,
         )
