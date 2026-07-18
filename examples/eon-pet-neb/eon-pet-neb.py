@@ -341,8 +341,8 @@ plt.show()
 # We compose the NEB from the same client steps as a workdir job, but keep
 # structures as ``Matter`` end to end. The steps are::
 #
-#   NebSpec → Parameters → make_backend → Matter endpoints → NEB.compute
-#   → find_extrema → neb_write_results → potcall summary → timing
+#   NebSpec → Parameters → make_backend(ase_metatomic) → Matter endpoints
+#   → NEB.compute → find_extrema → write_neb_results → potcall summary → timing
 
 write_con("reactant.con", reactant)
 write_con("product.con", product)
@@ -374,12 +374,16 @@ spec = NebSpec(
 )
 spec.apply_to_parameters(params)
 
-# Potential (metatomic PET-MAD) and endpoints
+# Potential: ASE MetatomicCalculator wrapped as eOn Potential. PyPI
+# pyeonclient wheels ship built_with_rgpot (not fat PotType.METATOMIC);
+# ase_metatomic reuses the same PET-MAD load path as the ASE section above.
 pot = make_backend(
-    "metatomic",
+    "ase_metatomic",
     model_path=str(fname.resolve()),
     device="cpu",
     params=params,
+    non_conservative=False,
+    uncertainty_threshold=0.001,
 )
 initial = Matter(pot, params)
 final = Matter(pot, params)
@@ -710,17 +714,19 @@ min_params.write_movies = True
 # Explicit Matter steps for each endpoint (same order as
 # ``minimize_workdir``)::
 #
-#   make_backend → Matter → con2matter → relax → matter2con
+#   make_backend(ase_metatomic) → Matter → con2matter → relax → matter2con
 #   → write_minimization_results → potcall summary → timing
 
 for workdir in (dir_reactant, dir_product):
     with chdir(workdir):
         t0 = steady_clock_now()
         pot = make_backend(
-            "metatomic",
+            "ase_metatomic",
             model_path=str(fname.resolve()),
             device="cpu",
             params=min_params,
+            non_conservative=False,
+            uncertainty_threshold=0.001,
         )
         matter = Matter(pot, min_params)
         if not io_ok(matter.con2matter("pos.con")):

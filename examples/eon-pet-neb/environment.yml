@@ -4,6 +4,7 @@ channels:
   - https://repo.prefix.dev/rg-forge
 dependencies:
   # Class-first client only: pyeonclient + eon-schema. No eon-akmc / full eon tree.
+  # pyeonclient is the 0.x PyPI line (not conda eon 2.16 branding).
   - ira
   - python=3.13
   - pip
@@ -12,12 +13,13 @@ dependencies:
     - torch>=2.9,<2.10
     - ase>=3.23
     - matplotlib
-    # PET-MAD / metatomic floor for pyeonclient metatomic backend.
+    # PET-MAD / metatomic floor; eOn pot uses ase_metatomic (MetatomicCalculator).
     - metatrain>=2026.3.1
     - requests
     - metatomic-ase
-    - pyeonclient>=2.16.0
-    - eon-schema>=0.2.0
+    # PyPI pyeonclient 0.x (wheels: built_with_rgpot, not fat METATOMIC).
+    - pyeonclient>=0.3.4
+    - eon-schema>=0.2.1
     # Notebook CON I/O + plots (rgpycrumbs uses eon-schema, not eon-akmc).
     - "readcon>=0.13.1"
     - "rgpycrumbs>=1.9.16,<2"
