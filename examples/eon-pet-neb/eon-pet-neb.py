@@ -464,11 +464,13 @@ def run_neb_plot(
     # plot pipeline is exposed as stable functions. Today: CLI + uv PEP 723
     # for plot deps (jax, adjustText,
     # chemparseplot, …). Host env only needs bare rgpycrumbs + readcon.
+    # No ``--dev``: plt_neb imports polars/chemparseplot at module load, so
+    # in-env dispatch fails unless the full plot stack is preinstalled. uv
+    # PEP 723 isolation (RGPYCRUMBS_FORCE_UV=1 below) pulls that stack.
     base_cmd = [
         sys.executable,
         "-m",
         "rgpycrumbs.cli",
-        "--dev",
         "eon",
         "plt-neb",
         "--con-file",
@@ -576,7 +578,6 @@ def run_min_plot(
         sys.executable,
         "-m",
         "rgpycrumbs.cli",
-        "--dev",
         "eon",
         "plt-min",
         "--plot-type",
@@ -620,9 +621,8 @@ def show_png(path: str, figsize=(10, 8)) -> None:
 os.environ.setdefault("MPLBACKEND", "Agg")
 # Prefer uv PEP 723 isolation for plot scripts so host need not carry
 # chemparseplot/jax/adjustText (avoids partial in-env stack).
-# Host env owns plot deps (chemparseplot/jax); do not uv-isolate editable monorepo.
-os.environ.setdefault("RGPKGS_FORCE_UV", "0")
-os.environ.setdefault("RGPYCRUMBS_FORCE_UV", "0")
+os.environ["RGPKGS_FORCE_UV"] = "1"
+os.environ["RGPYCRUMBS_FORCE_UV"] = "1"
 
 # Run the 1D plotting command using the helper
 run_neb_plot("profile", title="NEB Path Optimization", output_file="1D_oxad.png")
