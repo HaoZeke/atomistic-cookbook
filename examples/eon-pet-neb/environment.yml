@@ -22,7 +22,6 @@ dependencies:
     - pyeonclient>=0.3.4
     - eon-schema>=0.2.1
     # 2.5.2+ engines match vesin 0.6 VesinOptions (skin/n_threads ABI).
-    # Until PyPI ships 2.5.2, install from OmniPotentRPC/rgpot @ 68dee6e+.
     - rgpot>=2.5.2
     - vesin>=0.6.0
     # Notebook CON I/O + plots (rgpycrumbs uses eon-schema, not eon-akmc).
