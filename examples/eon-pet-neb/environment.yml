@@ -19,7 +19,7 @@ dependencies:
     - requests
     - metatomic-ase
     # PyPI pyeonclient 0.x (wheels: built_with_rgpot, not fat METATOMIC).
-    - pyeonclient>=0.3.4
+    - pyeonclient>=0.3.5
     - eon-schema>=0.2.1
     # 2.5.2+ engines match vesin 0.6 VesinOptions (skin/n_threads ABI).
     - rgpot>=2.5.2
