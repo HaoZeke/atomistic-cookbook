@@ -13,13 +13,16 @@ dependencies:
     - torch>=2.9,<2.10
     - ase>=3.23
     - matplotlib
-    # PET-MAD / metatomic floor; eOn pot uses ase_metatomic (MetatomicCalculator).
+    # PET-MAD / metatomic floor; eOn pot uses rgpot_metatomic (dlopen engine).
     - metatrain>=2026.3.1
     - requests
     - metatomic-ase
     # PyPI pyeonclient 0.x (wheels: built_with_rgpot, not fat METATOMIC).
     - pyeonclient>=0.3.4
     - eon-schema>=0.2.1
+    # 2.5.2+ engines match vesin 0.6 VesinOptions (skin/n_threads ABI).
+    - rgpot>=2.5.2
+    - vesin>=0.6.0
     # Notebook CON I/O + plots (rgpycrumbs uses eon-schema, not eon-akmc).
     - "readcon>=0.13.1"
     - "rgpycrumbs>=1.9.16,<2"
