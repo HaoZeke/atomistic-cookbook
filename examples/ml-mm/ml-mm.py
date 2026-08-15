@@ -82,6 +82,7 @@ from atomistic_cookbook_utils import run_command
 import matplotlib.pyplot as plt
 import MDAnalysis as mda
 import numpy as np
+import torch
 from MDAnalysis.analysis.dihedrals import Rama_ref, Ramachandran
 from MDAnalysis.analysis.rms import RMSD
 from metatomic_ase import MetatomicCalculator
@@ -131,6 +132,28 @@ url = f"https://huggingface.co/{repo_id}/resolve/main/{url_path}"
 fname.parent.mkdir(parents=True, exist_ok=True)
 
 run_command(f"mtt export {url} -o {fname}")
+
+
+def _stamp_mts_buffer_names(path: Path) -> None:
+    """Skip the libmetatensor-torch Module.to attribute walk.
+
+    ``mtt export`` writes modules without ``_mts_buffer_names``. GROMACS
+    ``Module.to`` then walks every attribute and raises on mixed dicts.
+    An empty name list skips that walk. The model is already on CPU,
+    matching ``metatomic-device = cpu``.
+    """
+    import metatomic.torch as metatomic_torch
+
+    metatomic_torch.load_model_extensions(str(path), None)
+    module = torch.jit.load(str(path))
+    list_ty = torch._C.ListType(torch._C.StringType.get())
+    for sub in module.modules():
+        if not sub._c.hasattr("_mts_buffer_names"):
+            sub._c._register_attribute("_mts_buffer_names", list_ty, [])
+    torch.jit.save(module, str(path))
+
+
+_stamp_mts_buffer_names(fname)
 print(f"Successfully exported {fname}.")
 
 # %%
