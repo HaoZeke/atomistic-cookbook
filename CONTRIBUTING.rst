@@ -39,7 +39,9 @@ following files inside:
 
 - ``README.rst``, can be empty or can contain a short description of the example;
 - ``environment.yml``, a `conda`_ environment file containing the list of
-  dependencies needed by your example;
+  dependencies needed by your example. Write one unpinned-for-device
+  file; the website build generates ``environment-cpu.yml`` and
+  ``environment-default.yml`` that users download;
 - as many Python files as you want, each one will be converted to a separate
   HTML page.
 
@@ -61,6 +63,11 @@ this, e.g. indicating the version known to work and the next major update
 This way if the example breaks further down the line it is easy to
 bring it back to a working state converting these to strict pinnings,
 yet most harmless updates will be applied automatically.
+
+Do not add a per-recipe CPU pin (``--extra-index-url`` for the PyTorch
+CPU index, ``pytorch-cpu``, and similar) unless the recipe cannot run
+without it. The shared generator in ``src/generate_environments.py``
+writes those into ``environment-cpu.yml`` for every recipe.
 
 Shared utilities
 ~~~~~~~~~~~~~~~~

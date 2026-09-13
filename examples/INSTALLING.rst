@@ -14,9 +14,10 @@ running a production calculation.
 You should be reading this from within a folder you obtained as a 
 ``recipe.zip`` archive, either from the website or from a colleague. 
 Each recipe consists of a a stand-alone ``.py`` script, a matching
-``.ipynb`` Jupyter notebook, an ``environment.yml`` file that allows
-recreating an environment to run the recipe, and possibly one or more 
-supporting data files.
+``.ipynb`` Jupyter notebook, generated ``environment-cpu.yml`` and
+``environment-default.yml`` files that recreate an environment to run
+the recipe, and possibly one or more supporting data files.
+``environment.yml`` is the same as ``environment-default.yml``.
 
 The fist step to run your recipe is to create a `conda` custom environment
 If you have never used conda before, you may want to read this
@@ -31,7 +32,10 @@ If you have never used conda before, you may want to read this
    # Pick a path where to create the environment and replace 
    # <recipe-env-path> with it - this creates a local folder 
    # to avoid cluttering the global conda folder
-   conda env create --prefix <recipe-env-path> --file environment.yml
+   conda env create --prefix <recipe-env-path> --file environment-cpu.yml
+
+   # Or, if you want the default PyPI / GPU torch resolve:
+   # conda env create --prefix <recipe-env-path> --file environment-default.yml
 
 
 Whenever you want to run the recipe you just need to activate the environment
@@ -46,9 +50,9 @@ and run the recipe file.
    python recipe.py
 
 
-The ``environment.yml`` contents should also help you set up your own 
-conda or pip environment to run without having to enter the recipe-specific
-environment.
+The ``environment-cpu.yml`` / ``environment-default.yml`` contents
+should also help you set up your own conda or pip environment to run
+without having to enter the recipe-specific environment.
 
 Given that many recipes contain post-processing and visualizations that
 are used to render the HTML page of the recipe, you may prefer to run the

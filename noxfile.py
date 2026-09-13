@@ -39,6 +39,11 @@ directives.register_directive("toctree", DummyToctree)
 ROOT = os.path.realpath(os.path.dirname(__file__))
 
 sys.path.insert(0, ROOT)
+from src.generate_environments import (  # noqa: E402
+    CONDA_CPU_EXTRAS,
+    append_environment_downloads,
+    write_environment_variants,
+)
 from src.get_examples import get_examples  # noqa: E402
 
 # global nox options
@@ -59,7 +64,9 @@ def get_lint_files():
     LINT_FILES = [
         "src/ipynb-to-gallery.py",
         "src/generate-gallery.py",
+        "src/generate_environments.py",
         "src/latest_docs_run.py",
+        "tests/test_generate_environments.py",
         "noxfile.py",
         "docs/src/conf.py",
         "src/get_examples.py",
@@ -318,6 +325,17 @@ def post_process_gallery(name, example_dir, files_before):
     # that also contains the rest of the files present in the example directory
     # before running the example (including e.g. data and environment.yml).
     # We create a zip file for each notebook.
+    generated_envs = []
+    source_environment = example_dir / "environment.yml"
+    if source_environment.is_file():
+        generated_envs = list(
+            write_environment_variants(source_environment, docs_example_dir).values()
+        )
+        for rst_file in docs_example_dir.glob("*.rst"):
+            if rst_file.name in {"index.rst", "sg_execution_times.rst"}:
+                continue
+            append_environment_downloads(rst_file)
+
     for py_file, notebook in zip(source_py_files, notebooks):
         with zipfile.ZipFile(docs_example_dir / f"{notebook.stem}.zip", "w") as zipf:
             # Add files from the data dir (if present)
@@ -340,15 +358,14 @@ def post_process_gallery(name, example_dir, files_before):
             # Adds the installation instructions
             zipf.write("examples/INSTALLING.rst", "INSTALLING.rst")
 
+            for generated in generated_envs:
+                zipf.write(generated, generated.name)
+
     os.unlink(f"docs/src/examples/{name}/index.rst")
 
 
-# For each of the dependencies as keys, add the value as an extra dependency
-DEPENCENCIES_UPDATES = {
-    "libtorch": "pytorch-cpu",
-    "lammps-metatomic": "lammps-metatomic * cpu*nompi*",
-    "plumed-metatomic": "plumed-metatomic * *nompi*",
-}
+# Kept as an alias: older comments and reviews refer to this name.
+DEPENCENCIES_UPDATES = CONDA_CPU_EXTRAS
 
 
 def _solved_packages_from_dry_run(data):
@@ -451,7 +468,10 @@ for name in EXAMPLES:
         example_dir = Path("examples") / name
         environment_yml = example_dir / "environment.yml"
         if should_reinstall_dependencies(session, environment_yml=environment_yml):
-            environment_yml = update_dependencies(environment_yml, session)
+            variants = write_environment_variants(
+                environment_yml, Path(session.virtualenv.location)
+            )
+            environment_yml = update_dependencies(variants["cpu"], session)
 
             session.run(
                 "conda",
@@ -638,6 +658,16 @@ that are not part of any of the other sections.
             fd.write(rst_output)
 
     session.run("sphinx-build", "-b", "html", "docs/src", "docs/build/html")
+
+
+@nox.session
+def test_envs(session):
+    """Unit tests for the CPU/default environment generator."""
+
+    if not session.virtualenv._reused:
+        session.install("pyyaml")
+
+    session.run("python", "-m", "unittest", "tests.test_generate_environments")
 
 
 @nox.session

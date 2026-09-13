@@ -15,8 +15,16 @@ HTML page, but can also be downloaded as a stand-alone ``.py`` script, or a
 ``.ipynb`` Jupyter notebook. To simplify setting up an environment that 
 contains all the dependencies needed for each recipe, each recipe can
 be downloaded as an archive that contains the script and notebook
-versions, together with any necessary data file and an ``environment.yml`` file 
-that you can use with conda to create a custom environment to run the example.
+versions, together with any necessary data file and two generated
+environment files you can use with conda:
+
+- ``environment-cpu.yml``: points pip at the PyTorch CPU wheel index
+  so ``torch`` does not pull CUDA libraries. Prefer this on a laptop
+  without a GPU.
+- ``environment-default.yml``: the recipe as authored. PyPI may
+  resolve a CUDA build of ``torch``. ``environment.yml`` is the same
+  file, kept for older download instructions.
+
 If you have never used conda before, you may want to read this
 `beginners guide 
 <https://docs.conda.io/projects/conda/en/latest/user-guide/getting-started.html>`_.
@@ -29,7 +37,10 @@ If you have never used conda before, you may want to read this
    # Pick a path where to create the environment and replace 
    # <recipe-env-path> with it - this creates a local folder 
    # to avoid cluttering the global conda folder
-   conda env create --prefix <recipe-env-path> --file environment.yml
+   conda env create --prefix <recipe-env-path> --file environment-cpu.yml
+
+   # Or, if you want the default PyPI / GPU torch resolve:
+   # conda env create --prefix <recipe-env-path> --file environment-default.yml
 
 
 Whenever you want to run the recipe you just need to activate the environment
@@ -44,9 +55,9 @@ and run the recipe file.
    python recipe.py
 
 
-The ``environment.yml`` contents should also help you set up your own 
-conda or pip environment to run without having to enter the recipe-specific
-environment.
+The ``environment-cpu.yml`` / ``environment-default.yml`` contents
+should also help you set up your own conda or pip environment to run
+without having to enter the recipe-specific environment.
 
 Given that many recipes contain post-processing and visualizations that
 are used to render the HTML page of the recipe, you may prefer to run the
